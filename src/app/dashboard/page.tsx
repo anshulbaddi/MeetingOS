@@ -1,5 +1,7 @@
+import Link from "next/link"
 import { format, parseISO } from "date-fns"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import {
   Card,
   CardContent,
@@ -21,10 +23,15 @@ export default async function DashboardPage({
   const displayDate = parseISO(dateStr)
 
   return (
-    <main className="flex flex-col gap-8 px-6 py-8 max-w-3xl mx-auto w-full">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
-        <p className="text-sm text-muted-foreground">View your workouts by date.</p>
+    <main className="flex flex-col gap-8 px-8 py-8 w-full">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex flex-col gap-1">
+          <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
+          <p className="text-sm text-muted-foreground">View your workouts by date.</p>
+        </div>
+        <Button asChild>
+          <Link href="/dashboard/workout/new">Log Workout</Link>
+        </Button>
       </div>
 
       <DatePicker dateStr={dateStr} />
