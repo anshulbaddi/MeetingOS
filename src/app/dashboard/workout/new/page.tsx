@@ -119,7 +119,7 @@ export default function NewWorkoutPage() {
           })),
         })),
       });
-      router.push("/dashboard");
+      router.push(`/dashboard?date=${startedAt.slice(0, 10)}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong.");
       setSubmitting(false);
