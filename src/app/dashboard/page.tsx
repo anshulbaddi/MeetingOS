@@ -63,7 +63,8 @@ export default async function DashboardPage({
                   : null
 
               return (
-                <Card key={workout.id}>
+                <Link key={workout.id} href={`/dashboard/workout/${workout.id}`} className="block">
+                <Card className="transition-colors hover:bg-muted/50 cursor-pointer">
                   <CardHeader className="pb-3">
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex flex-col gap-1">
@@ -106,6 +107,7 @@ export default async function DashboardPage({
                     </CardContent>
                   )}
                 </Card>
+                </Link>
               )
             })}
           </div>

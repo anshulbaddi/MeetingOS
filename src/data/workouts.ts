@@ -43,6 +43,25 @@ export async function createWorkout(input: CreateWorkoutInput) {
   return workout;
 }
 
+export async function getWorkoutById(id: number) {
+  const { userId } = await auth();
+  if (!userId) throw new Error("Unauthorized");
+
+  return db.query.workouts.findFirst({
+    where: and(eq(workouts.id, id), eq(workouts.userId, userId)),
+    with: {
+      workoutExercises: {
+        orderBy: (we, { asc }) => asc(we.orderIndex),
+        with: {
+          sets: {
+            orderBy: (s, { asc }) => asc(s.setNumber),
+          },
+        },
+      },
+    },
+  });
+}
+
 export async function getWorkoutsForDate(dateStr: string) {
   const { userId } = await auth();
   if (!userId) throw new Error("Unauthorized");
