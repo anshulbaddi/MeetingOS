@@ -15,6 +15,7 @@ Current docs:
 - `docs/data-fetching.md` — data fetching standards (applies to every database query, Server Component, and any code that reads or writes data)
 - `docs/auth.md` — auth standards (applies to every route, middleware, Server Component, and data helper that touches authentication or user identity)
 - `docs/data-mutations.md` — data mutation standards (applies to every insert, update, or delete operation, all Server Actions, and any code that writes to the database)
+- `docs/routing.md` — routing standards (applies to every route, page, and link — all app routes must live under `/dashboard` and be protected via middleware)
 
 ## Commands
 

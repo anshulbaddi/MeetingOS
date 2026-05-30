@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -28,10 +28,24 @@ function emptyExercise(): ExerciseRow {
 }
 
 export default function NewWorkoutPage() {
-  const router = useRouter();
-  const [startedAt, setStartedAt] = useState(
-    new Date().toISOString().slice(0, 16),
+  return (
+    <Suspense>
+      <NewWorkoutForm />
+    </Suspense>
   );
+}
+
+function NewWorkoutForm() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const [startedAt, setStartedAt] = useState(() => {
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const datePart =
+      searchParams.get("date") ??
+      `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+    return `${datePart}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  });
   const [notes, setNotes] = useState("");
   const [exercises, setExercises] = useState<ExerciseRow[]>([emptyExercise()]);
   const [submitting, setSubmitting] = useState(false);

@@ -17,10 +17,10 @@ This is a hard rule with no exceptions. Session management, sign-in/sign-up flow
 
 ## Middleware: Route Protection
 
-All route protection lives in `src/middleware.ts`. Use Clerk's `clerkMiddleware` with `createRouteMatcher` to define public routes. Every route not explicitly marked public is protected by default.
+All route protection lives in `src/proxy.ts`. Use Clerk's `clerkMiddleware` with `createRouteMatcher` to define public routes. Every route not explicitly marked public is protected by default.
 
 ```ts
-// src/middleware.ts
+// src/proxy.ts
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 
 const isPublicRoute = createRouteMatcher(["/", "/sign-in(.*)", "/sign-up(.*)"]);

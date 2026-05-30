@@ -1,11 +1,11 @@
-import { integer, pgTable, varchar, timestamp, real, pgEnum } from "drizzle-orm/pg-core";
+import { integer, pgTable, varchar, timestamp, real, pgEnum, uuid } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 
 export const weightUnitEnum = pgEnum("weight_unit", ["lbs", "kg"]);
 
 // A single gym session
 export const workouts = pgTable("workouts", {
-  id: integer().primaryKey().generatedAlwaysAsIdentity(),
+  id: uuid().primaryKey().defaultRandom(),
   userId: varchar({ length: 255 }).notNull(),
   notes: varchar({ length: 1000 }),
   startedAt: timestamp().notNull(),
@@ -16,7 +16,7 @@ export const workouts = pgTable("workouts", {
 // An exercise performed during a workout (e.g. "Bench Press" as the 2nd exercise)
 export const workoutExercises = pgTable("workout_exercises", {
   id: integer().primaryKey().generatedAlwaysAsIdentity(),
-  workoutId: integer().notNull().references(() => workouts.id, { onDelete: "cascade" }),
+  workoutId: uuid().notNull().references(() => workouts.id, { onDelete: "cascade" }),
   name: varchar({ length: 255 }).notNull(),
   orderIndex: integer().notNull(), // order within the workout
 });
