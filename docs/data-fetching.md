@@ -1,77 +1,93 @@
 # Data Fetching Standards
 
-## Rule: Server Components Only
+## Rule: Server Components call FastAPI via `apiFetch()`
 
-**All data fetching must happen in Server Components. No route handlers. No client-side fetching.**
+**All data fetching must happen in Server Components using `apiFetch()` from `src/lib/api.ts`. No client-side fetching. No direct database access from Next.js.**
 
-This is a hard rule with no exceptions. Data never flows through `fetch()` in a Client Component, through an API route handler (`app/api/`), or through any client-side state library (SWR, React Query, etc.).
+The database is owned by the FastAPI backend. Next.js never touches the database directly — it calls FastAPI endpoints, which return data.
 
 ## What This Means in Practice
 
-- **Do not** create `app/api/` route handlers for data fetching purposes.
-- **Do not** call `fetch()`, `axios`, or any HTTP client inside a Client Component.
-- **Do not** write raw SQL queries anywhere in the codebase.
-- **Do** fetch data by calling helper functions from the `/data` directory directly inside `async` Server Components.
-- **Do** keep all database logic inside `/data` helper functions — pages and components must never import from `src/db` directly.
+- **Do not** query the database from Next.js — no Drizzle, no psycopg2, no raw SQL.
+- **Do not** create `app/api/` route handlers for data fetching.
+- **Do not** call `apiFetch()` from a Client Component — it uses `auth()` which is server-only.
+- **Do** fetch data in `async` Server Components by calling `apiFetch()`.
+- **Do** define the corresponding GET endpoint in `backend/main.py` (or a FastAPI router).
 
-## The `/data` Directory
+## `apiFetch()`
 
-Every database query lives in a helper function inside `src/data/`. These functions:
-
-- Use Drizzle ORM exclusively — no raw SQL, no `db.execute()` with a raw string.
-- Accept only the parameters they need — never accept a userId from the caller; always read it from the session (see Security below).
-- Return plain objects or arrays — not Drizzle query builder instances.
-
-```
-src/
-  data/
-    workouts.ts    ← e.g. getWorkouts(), getWorkoutById()
-    exercises.ts   ← e.g. getExercises()
-    sets.ts        ← e.g. getSetsForWorkout()
-  app/
-    dashboard/
-      page.tsx     ← async Server Component that calls data/ helpers
-```
-
-### Example helper
+`src/lib/api.ts` is the single entry point for all Next.js → FastAPI communication. It automatically reads the Auth.js session and signs a short-lived JWT for FastAPI.
 
 ```ts
-// src/data/workouts.ts
-import { db } from "@/db";
-import { workouts } from "@/db/schema";
-import { eq } from "drizzle-orm";
-import { auth } from "@clerk/nextjs/server";
+// src/lib/api.ts
+import { auth } from "@/auth";
+import { SignJWT } from "jose";
 
-export async function getWorkouts() {
-  const { userId } = await auth();
-  if (!userId) throw new Error("Unauthorized");
+const API_URL = process.env.API_URL ?? "http://localhost:8000";
+const secret = new TextEncoder().encode(process.env.NEXTAUTH_SECRET!);
 
-  return db.select().from(workouts).where(eq(workouts.userId, userId));
+export async function apiFetch(path: string, init?: RequestInit) {
+  const session = await auth();
+  if (!session?.user?.id) throw new Error("Unauthorized");
+
+  const token = await new SignJWT({ sub: session.user.id })
+    .setProtectedHeader({ alg: "HS256" })
+    .setExpirationTime("1m")
+    .sign(secret);
+
+  const res = await fetch(`${API_URL}${path}`, {
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+      ...(init?.headers ?? {}),
+    },
+  });
+  if (!res.ok) throw new Error(`API error ${res.status}: ${await res.text()}`);
+  return res.json();
 }
 ```
 
-### Example Server Component
+## Fetching in a Server Component
 
 ```tsx
 // src/app/dashboard/page.tsx
-import { getWorkouts } from "@/data/workouts";
+import { apiFetch } from "@/lib/api";
 
 export default async function DashboardPage() {
-  const workouts = await getWorkouts();
-  // render ...
+  const items = await apiFetch("/items");
+  return <div>{/* render items */}</div>;
 }
 ```
 
-## Security: Users Must Only Access Their Own Data
+## FastAPI: Defining a GET Endpoint
 
-**Every `/data` helper that queries user-owned rows must scope the query to the currently authenticated user.**
+All GET endpoints must use `get_current_user_id` as a dependency to enforce auth and scope results to the current user.
 
-- Call `auth()` from `@clerk/nextjs/server` inside the helper — never trust a `userId` passed in as a parameter.
-- Always add a `.where(eq(table.userId, userId))` clause (or equivalent join condition) so a user can never retrieve another user's rows.
-- If `userId` is `null` (unauthenticated), throw immediately — do not return an empty array or a fallback.
+```python
+# backend/main.py
+from auth import get_current_user_id
+from fastapi import Depends
+from db import get_db
 
-Failing to scope a query to the current user is a critical security bug. There are no exceptions to this rule.
+@app.get("/items")
+def get_items(user_id: str = Depends(get_current_user_id)):
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM items WHERE user_id = %s", (user_id,))
+            return cur.fetchall()
+```
+
+**Never omit the `user_id` filter.** Returning rows without filtering by `user_id` is a critical security bug.
+
+## Security: Users Must Only See Their Own Data
+
+Every FastAPI GET endpoint that returns user-owned data must:
+
+1. Accept `user_id` via `Depends(get_current_user_id)` — never trust a user-supplied ID.
+2. Filter all queries by that `user_id`.
+3. Return 404 (not 403) if the requested resource doesn't belong to the user — don't confirm the resource exists.
 
 ## Rationale
 
-Keeping all data fetching in Server Components eliminates an entire class of client/server round-trips, avoids exposing an API surface that could be called outside of the app, and makes it straightforward to enforce per-user data scoping in one place — inside the `/data` helpers — rather than scattered across the codebase.
+Keeping all database access in FastAPI gives one place to audit data access and enforce row-level security. Server Components calling `apiFetch()` keeps the data flow simple: one round trip per page, no client-side loading states, no exposed API surface callable outside the app.

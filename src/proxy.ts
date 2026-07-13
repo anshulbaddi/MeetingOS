@@ -1,17 +1,24 @@
-import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+import { auth } from "@/auth";
 import { NextResponse } from "next/server";
 
-const isPublicRoute = createRouteMatcher(["/", "/sign-in(.*)", "/sign-up(.*)"]);
+export default auth((req) => {
+  const { pathname } = req.nextUrl;
+  const isPublicRoute =
+    pathname === "/" ||
+    pathname === "/donate" ||
+    pathname === "/contact" ||
+    pathname.startsWith("/docs") ||
+    pathname.startsWith("/api/auth") ||
+    pathname === "/api/chat/public" ||
+    pathname === "/api/donate/checkout" ||
+    pathname === "/api/contact";
 
-export default clerkMiddleware(async (auth, req) => {
-  const { userId } = await auth();
-
-  if (userId && isPublicRoute(req)) {
+  if (req.auth && pathname === "/") {
     return NextResponse.redirect(new URL("/dashboard", req.url));
   }
 
-  if (!isPublicRoute(req)) {
-    await auth.protect();
+  if (!req.auth && !isPublicRoute) {
+    return NextResponse.redirect(new URL("/", req.url));
   }
 });
 

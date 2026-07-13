@@ -17,6 +17,14 @@ Current docs:
 - `docs/data-mutations.md` — data mutation standards (applies to every insert, update, or delete operation, all Server Actions, and any code that writes to the database)
 - `docs/routing.md` — routing standards (applies to every route, page, and link — all app routes must live under `/dashboard` and be protected via middleware)
 
+## Developer Learning Requirements
+
+The user is building a deep technical understanding of this project. After writing any code or running any SQL, you MUST:
+
+1. **Explain what you built** — what the code does, why it's structured that way, and what problem it solves.
+2. **Explain where it lives** — which file, which directory, and how it connects to the rest of the system.
+3. **Test it** — every piece of code must be verified to actually work. For database changes, insert and query test data to confirm the tables function. For API endpoints, call them and show the response. For UI, run the dev server and verify the page renders. Never report something as done without proving it works.
+
 ## Commands
 
 ```bash

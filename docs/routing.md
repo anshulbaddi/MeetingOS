@@ -2,77 +2,85 @@
 
 ## Rule: All App Routes Live Under `/dashboard`
 
-**Every feature route in this app must be nested under `/dashboard`. No feature pages exist at the root level.**
+**Every authenticated feature route must be nested under `/dashboard`. No feature pages at the root level.**
 
-This is a hard rule with no exceptions. Any page that requires authentication or renders app content belongs under `/dashboard` (e.g., `/dashboard`, `/dashboard/workouts`, `/dashboard/settings`). Only marketing, sign-in, and sign-up pages are allowed at the root level.
-
-## What This Means in Practice
-
-- **Do not** create feature pages at the root (`/workouts`, `/profile`, `/settings`, etc.) — they must live under `/dashboard/`.
-- **Do** nest all authenticated pages in `src/app/dashboard/` using the App Router file structure.
-- **Do not** implement route protection inside page components or layouts — protection is handled exclusively by middleware (see below).
-- **Do** use Next.js nested routing: create subdirectories under `src/app/dashboard/` for each feature area.
+Only the landing page (`/`) and Auth.js OAuth routes (`/api/auth/*`) are public. Everything else belongs under `/dashboard`.
 
 ## File Structure
 
 ```
 src/
   app/
-    page.tsx                          ← public landing/home page
-    sign-in/[[...sign-in]]/page.tsx   ← public Clerk sign-in page
-    sign-up/[[...sign-up]]/page.tsx   ← public Clerk sign-up page
+    page.tsx                        ← public landing page
+    api/
+      auth/
+        [...nextauth]/
+          route.ts                  ← Auth.js OAuth handler (do not modify)
+      analyze/
+        url/route.ts                ← POST /api/analyze/url
+        file/route.ts               ← POST /api/analyze/file
+      responses/
+        [id]/route.ts               ← PATCH /api/responses/[id]
     dashboard/
-      page.tsx                        ← main dashboard (protected)
-      layout.tsx                      ← shared dashboard layout (optional)
-      workouts/
-        page.tsx                      ← /dashboard/workouts
-        [workoutId]/
-          page.tsx                    ← /dashboard/workouts/:workoutId
-      settings/
-        page.tsx                      ← /dashboard/settings
+      page.tsx                      ← main dashboard (protected)
+      layout.tsx                    ← shared dashboard layout (optional)
+      some-feature/
+        page.tsx                    ← /dashboard/some-feature
+        [id]/
+          page.tsx                  ← /dashboard/some-feature/:id
 ```
 
 ## Route Protection via Middleware
 
-All `/dashboard` routes are protected by Clerk middleware in `src/proxy.ts`. The proxy is the **single enforcement point** — do not add `auth()` guard checks in layouts or pages for the purpose of redirecting unauthenticated users.
-
-The public route matcher must explicitly allow the root page and Clerk auth routes. Everything else — including all `/dashboard` routes — is protected by default:
+All protection lives in `src/proxy.ts`. Do not add auth guards inside page components or layouts.
 
 ```ts
 // src/proxy.ts
-import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+import { auth } from "@/auth";
+import { NextResponse } from "next/server";
 
-const isPublicRoute = createRouteMatcher(["/", "/sign-in(.*)", "/sign-up(.*)"]);
+export default auth((req) => {
+  const { pathname } = req.nextUrl;
+  const isPublicRoute = pathname === "/" || pathname.startsWith("/api/auth");
 
-export default clerkMiddleware(async (auth, req) => {
-  if (!isPublicRoute(req)) {
-    await auth.protect();
+  if (req.auth && pathname === "/") {
+    return NextResponse.redirect(new URL("/dashboard", req.url));
+  }
+
+  if (!req.auth && !isPublicRoute) {
+    return NextResponse.redirect(new URL("/", req.url));
   }
 });
-
-export const config = {
-  matcher: [
-    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
-    "/(api|trpc)(.*)",
-  ],
-};
 ```
 
-`auth.protect()` automatically redirects unauthenticated users to the sign-in page — no manual redirect logic needed.
+Key rules:
+- `/api/auth/*` must always be public — these are the Auth.js callback routes and must never be blocked.
+- Signed-in users hitting `/` are redirected to `/dashboard`.
+- Unauthenticated users hitting any non-public route are redirected to `/`.
+- API route handlers at `/api/*` (other than `/api/auth`) are additionally protected server-side by `apiFetch()`, which calls `auth()` and throws if no session exists.
 
 ## Navigation
 
-All internal links to app pages must use the `/dashboard` prefix. Never link directly to a feature page at the root level.
+All internal links must use the `/dashboard` prefix.
 
 ```tsx
 // correct
 <Link href="/dashboard">Dashboard</Link>
-<Link href="/dashboard/workouts">Workouts</Link>
+<Link href="/dashboard/some-feature">Feature</Link>
 
 // wrong — feature pages don't exist at the root
-<Link href="/workouts">Workouts</Link>
+<Link href="/some-feature">Feature</Link>
 ```
+
+## API Routes
+
+`app/api/` route handlers are used for two purposes only:
+
+1. **Auth.js** — `app/api/auth/[...nextauth]/route.ts` (do not modify)
+2. **Mutation proxies** — route handlers that receive a `fetch` call from a Client Component, validate with Zod, and forward to FastAPI via `apiFetch()`
+
+Do not create `app/api/` route handlers for data fetching — those go directly through `apiFetch()` in Server Components.
 
 ## Rationale
 
-Grouping all authenticated pages under `/dashboard` creates a single, predictable subtree that the middleware can protect without enumerating individual routes. It also makes it immediately obvious where new feature pages belong, and prevents accidental public exposure of pages that should require a login.
+Grouping all authenticated pages under `/dashboard` creates a single predictable subtree that middleware can protect without enumerating individual routes. Keeping `/api/auth/*` explicitly public ensures the OAuth flow is never accidentally blocked. Mutation API routes live under `/api/` so Client Components can call them with plain `fetch`.

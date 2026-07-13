@@ -1,126 +1,122 @@
-import Link from "next/link"
-import { format, parseISO } from "date-fns"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
-import { DatePicker } from "./_components/date-picker"
-import { getWorkoutsForDate } from "@/data/workouts"
+import Link from "next/link";
+import { apiFetch } from "@/lib/api";
+import { Badge } from "@/components/ui/badge";
+import { UploadForm } from "./_components/upload-form";
+import { LiveRecorder } from "./_components/live-recorder";
+import { SearchBar } from "./_components/search-bar";
 
-export default async function DashboardPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ [key: string]: string | string[] | undefined }>
-}) {
-  const { date, tz } = await searchParams
-  const tzOffset = typeof tz === "string" ? parseInt(tz, 10) : 0
-  const dateStr = typeof date === "string"
-    ? date
-    : new Date(Date.now() - tzOffset * 60 * 1000).toISOString().slice(0, 10)
-  const workouts = await getWorkoutsForDate(dateStr, tzOffset)
-  const displayDate = parseISO(dateStr)
+type Meeting = {
+  id: string;
+  title: string;
+  status: "processing" | "complete" | "failed";
+  duration_seconds: number | null;
+  created_at: string;
+};
+
+async function getMeetings(): Promise<Meeting[]> {
+  try {
+    return await apiFetch("/meetings");
+  } catch {
+    return [];
+  }
+}
+
+function formatDate(iso: string) {
+  return new Date(iso).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function formatDuration(secs: number | null) {
+  if (!secs) return null;
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function statusVariant(status: string): "default" | "secondary" | "destructive" {
+  if (status === "complete") return "default";
+  if (status === "failed") return "destructive";
+  return "secondary";
+}
+
+export default async function DashboardPage() {
+  const meetings = await getMeetings();
 
   return (
-    <main className="flex flex-col gap-8 px-8 py-8 w-full">
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
-          <p className="text-sm text-muted-foreground">View your workouts by date.</p>
-        </div>
-        <Button asChild>
-          <Link href={`/dashboard/workout/new?date=${dateStr}`}>Log Workout</Link>
-        </Button>
+    <main className="max-w-2xl mx-auto w-full px-6 py-10 flex flex-col gap-10">
+      <div>
+        <h1 className="text-xl font-medium">Upload a meeting</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Drop a recording and we&apos;ll transcribe it, extract key moments, and let you ask questions about it.
+        </p>
       </div>
 
-      <DatePicker dateStr={dateStr} />
+      <UploadForm />
 
-      <div className="flex flex-col gap-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-base font-medium">
-            Workouts for {format(displayDate, "MMMM d, yyyy")}
-          </h2>
-          <Badge variant="outline" className="text-muted-foreground">
-            {workouts.length} {workouts.length === 1 ? "session" : "sessions"}
-          </Badge>
-        </div>
+      <div>
+        <p className="text-sm font-medium mb-2">Or record directly</p>
+        <LiveRecorder />
+      </div>
 
-        {workouts.length === 0 ? (
-          <Card>
-            <CardContent className="flex items-center justify-center py-12 text-sm text-muted-foreground">
-              No workouts logged for this date.
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="flex flex-col gap-4">
-            {workouts.map((workout) => {
-              const durationMin =
-                workout.completedAt
-                  ? Math.round(
-                      (workout.completedAt.getTime() - workout.startedAt.getTime()) / 60000,
-                    )
-                  : null
-
-              return (
-                <Link key={workout.id} href={`/dashboard/workout/${workout.id}`} className="block">
-                <Card className="transition-colors hover:bg-muted/50 cursor-pointer">
-                  <CardHeader className="pb-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex flex-col gap-1">
-                        <CardTitle className="text-base">
-                          {format(workout.startedAt, "h:mm a")}
-                        </CardTitle>
-                        {durationMin !== null && (
-                          <CardDescription>{durationMin} min</CardDescription>
-                        )}
-                        {workout.notes && (
-                          <CardDescription>{workout.notes}</CardDescription>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Badge variant="outline">
-                          {workout.workoutExercises.length}{" "}
-                          {workout.workoutExercises.length === 1 ? "exercise" : "exercises"}
-                        </Badge>
-                        <Button asChild variant="ghost" size="sm">
-                          <Link href={`/dashboard/workout/${workout.id}`}>Edit</Link>
-                        </Button>
-                      </div>
-                    </div>
-                  </CardHeader>
-                  {workout.workoutExercises.length > 0 && (
-                    <CardContent>
-                      <div className="flex flex-col gap-3">
-                        {workout.workoutExercises.map((exercise) => (
-                          <div key={exercise.id} className="flex flex-col gap-1">
-                            <span className="text-sm font-medium">{exercise.name}</span>
-                            <div className="flex flex-col gap-0.5">
-                              {exercise.sets.map((set) => (
-                                <span
-                                  key={set.id}
-                                  className="text-sm text-muted-foreground"
-                                >
-                                  Set {set.setNumber} — {set.reps} reps @ {set.weight}{" "}
-                                  {set.unit}
-                                </span>
-                              ))}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </CardContent>
-                  )}
-                </Card>
-                </Link>
-              )
-            })}
+      {meetings.some((m) => m.status === "complete") && (
+        <>
+          <SearchBar />
+          <div className="flex gap-4 -mt-6">
+            <Link
+              href="/dashboard/decisions"
+              className="text-sm text-muted-foreground hover:text-foreground underline underline-offset-2"
+            >
+              View all decisions →
+            </Link>
+            <Link
+              href="/dashboard/conflicts"
+              className="text-sm text-muted-foreground hover:text-foreground underline underline-offset-2"
+            >
+              View conflicts →
+            </Link>
+            <Link
+              href="/dashboard/agent"
+              className="text-sm text-muted-foreground hover:text-foreground underline underline-offset-2"
+            >
+              Agent →
+            </Link>
           </div>
-        )}
-      </div>
+        </>
+      )}
+
+      {meetings.length > 0 && (
+        <div>
+          <p className="text-sm mb-2 text-muted-foreground">Past meetings</p>
+          <div className="border rounded-md divide-y text-sm">
+            {meetings.map((m) => (
+              <div key={m.id} className="flex items-center gap-3 px-3 py-2.5">
+                <span className="text-muted-foreground shrink-0 text-xs w-28">
+                  {formatDate(m.created_at)}
+                </span>
+                <span className="truncate flex-1">{m.title}</span>
+                {formatDuration(m.duration_seconds) && (
+                  <span className="text-xs text-muted-foreground shrink-0">
+                    {formatDuration(m.duration_seconds)}
+                  </span>
+                )}
+                <Badge variant={statusVariant(m.status)} className="shrink-0 text-xs">
+                  {m.status}
+                </Badge>
+                <Link
+                  href={`/dashboard/meetings/${m.id}`}
+                  className="shrink-0 underline underline-offset-2 hover:text-foreground text-muted-foreground"
+                >
+                  view
+                </Link>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </main>
-  )
+  );
 }

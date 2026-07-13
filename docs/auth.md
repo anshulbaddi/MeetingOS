@@ -1,111 +1,139 @@
 # Auth Standards
 
-## Rule: Clerk for All Authentication
+## Rule: Auth.js (NextAuth v5) with Google OAuth
 
-**This app uses Clerk for authentication. Do not implement any custom auth logic.**
+**This app uses Auth.js v5 for authentication. Do not implement any custom auth logic.**
 
-This is a hard rule with no exceptions. Session management, sign-in/sign-up flows, user identity, and access control are all handled by Clerk. Do not reach for next-auth, custom JWTs, cookies, or any other auth mechanism.
+Session management and sign-in flow are handled by Auth.js with the Google OAuth provider. Do not reach for custom JWTs, raw cookies, or any other auth mechanism.
 
-## What This Means in Practice
+## How It Works
 
-- **Do not** build custom sign-in or sign-up pages from scratch — use Clerk's hosted pages or the `<SignIn />` / `<SignUp />` components.
-- **Do not** write your own session or token logic — Clerk manages the session cookie automatically.
-- **Do not** pass `userId` as a prop or URL parameter into components or data helpers — always read it from the Clerk session on the server (see Data Fetching standards).
-- **Do** protect routes via Clerk middleware — it is the single enforcement point for access control.
-- **Do** use `auth()` from `@clerk/nextjs/server` in Server Components and `/data` helpers to read the current user.
-- **Do** use `useAuth()` or `useUser()` from `@clerk/nextjs` in Client Components only when the user identity is needed for UI rendering (not for data fetching).
+```
+Browser → Google OAuth → Auth.js callback → session cookie (Next.js)
+                                                    ↓
+                              apiFetch() signs short-lived HS256 JWT
+                                                    ↓
+                                     FastAPI verifies JWT with NEXTAUTH_SECRET
+```
+
+The session lives in a cookie managed by Auth.js. When calling FastAPI, `apiFetch()` in `src/lib/api.ts` reads the session server-side and signs a short-lived HS256 JWT using `NEXTAUTH_SECRET`. FastAPI verifies that same JWT using the shared secret.
+
+## Auth Config
+
+All Auth.js configuration lives in `src/auth.ts`.
+
+```ts
+// src/auth.ts
+import NextAuth from "next-auth";
+import Google from "next-auth/providers/google";
+
+export const { handlers, signIn, signOut, auth } = NextAuth({
+  providers: [
+    Google({
+      clientId: process.env.GOOGLE_CLIENT_ID!,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+    }),
+  ],
+  callbacks: {
+    jwt({ token, profile }) {
+      if (profile?.sub) token.sub = profile.sub;
+      return token;
+    },
+    session({ session, token }) {
+      if (token.sub) session.user.id = token.sub;
+      return session;
+    },
+  },
+});
+```
 
 ## Middleware: Route Protection
 
-All route protection lives in `src/proxy.ts`. Use Clerk's `clerkMiddleware` with `createRouteMatcher` to define public routes. Every route not explicitly marked public is protected by default.
+All route protection lives in `src/proxy.ts`. Auth.js middleware is the single enforcement point — do not add auth guards inside page components or layouts.
 
 ```ts
 // src/proxy.ts
-import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+import { auth } from "@/auth";
+import { NextResponse } from "next/server";
 
-const isPublicRoute = createRouteMatcher(["/", "/sign-in(.*)", "/sign-up(.*)"]);
+export default auth((req) => {
+  const { pathname } = req.nextUrl;
+  const isPublicRoute = pathname === "/" || pathname.startsWith("/api/auth");
 
-export default clerkMiddleware(async (auth, req) => {
-  if (!isPublicRoute(req)) {
-    await auth.protect();
+  if (req.auth && pathname === "/") {
+    return NextResponse.redirect(new URL("/dashboard", req.url));
+  }
+
+  if (!req.auth && !isPublicRoute) {
+    return NextResponse.redirect(new URL("/", req.url));
   }
 });
-
-export const config = {
-  matcher: ["/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)", "/(api|trpc)(.*)"],
-};
 ```
 
-## Reading the Current User on the Server
+`/api/auth/*` must always be public — these are the Auth.js callback routes.
 
-Use `auth()` when you only need the `userId` (e.g., in `/data` helpers). Use `currentUser()` when you need the full user object (name, email, etc.) for display purposes.
+## Reading the Session in Server Components
+
+Use `auth()` from `@/auth` in Server Components to get the current session.
 
 ```ts
-// userId only — use in /data helpers
-import { auth } from "@clerk/nextjs/server";
+import { auth } from "@/auth";
 
-const { userId } = await auth();
-if (!userId) throw new Error("Unauthorized");
+const session = await auth();
+if (!session?.user?.id) throw new Error("Unauthorized");
+const userId = session.user.id; // Google's sub identifier
 ```
+
+Do not read the session in Client Components for data access — only the server can be trusted.
+
+## Sign In / Sign Out
+
+Sign-in and sign-out use Server Actions with Auth.js functions. Both are already wired in `src/app/layout.tsx`.
 
 ```ts
-// full user object — use in Server Components for display
-import { currentUser } from "@clerk/nextjs/server";
+import { signIn, signOut } from "@/auth";
 
-const user = await currentUser();
+// sign in
+await signIn("google");
+
+// sign out
+await signOut({ redirectTo: "/" });
 ```
 
-Never call `currentUser()` inside `/data` helpers — they only need `userId`. `currentUser()` makes an extra network call; reserve it for when you actually need the user's profile fields.
+## FastAPI Auth
 
-## Reading Auth State on the Client
+FastAPI verifies the JWT passed by `apiFetch()` using `backend/auth.py`. The token is HS256-signed with `NEXTAUTH_SECRET` and expires in 1 minute.
 
-Use Clerk's React hooks only for UI-driven decisions (showing a user's name, toggling a logged-in state, etc.). Never use client-side auth state to gate data access — that must be enforced on the server.
-
-```tsx
-"use client";
-import { useUser } from "@clerk/nextjs";
-
-export function UserGreeting() {
-  const { user } = useUser();
-  return <p>Hello, {user?.firstName}</p>;
-}
+```python
+# backend/auth.py
+payload = jwt.decode(token, NEXTAUTH_SECRET, algorithms=["HS256"])
+user_id = payload["sub"]  # Google sub, matches session.user.id
 ```
 
-## Sign-In / Sign-Up Pages
+Use `get_current_user_id` as a FastAPI dependency on any protected endpoint:
 
-Create thin route files that render Clerk's components centered on the page. Do not build custom forms.
+```python
+from auth import get_current_user_id
+from fastapi import Depends
 
-```tsx
-// src/app/sign-in/[[...sign-in]]/page.tsx
-import { SignIn } from "@clerk/nextjs";
-
-export default function SignInPage() {
-  return (
-    <div className="flex min-h-screen items-center justify-center">
-      <SignIn />
-    </div>
-  );
-}
+@app.get("/items")
+async def get_items(user_id: str = Depends(get_current_user_id)):
+    ...
 ```
-
-The catch-all segment (`[[...sign-in]]`) is required — Clerk uses sub-paths for its multi-step flow.
 
 ## Environment Variables
 
-Clerk requires two environment variables. These must be present in `.env.local` and must never be committed to the repository.
+```
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+NEXTAUTH_SECRET=...        # shared with FastAPI backend
+NEXTAUTH_URL=http://localhost:3000
+AUTH_SECRET=...            # same value as NEXTAUTH_SECRET (Auth.js v5 alias)
+AUTH_URL=http://localhost:3000
+```
 
-```
-NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_...
-CLERK_SECRET_KEY=sk_...
-```
-
-Optionally configure redirect URLs:
-
-```
-NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in
-NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up
-```
+The same `NEXTAUTH_SECRET` must be set in `backend/.env`.
 
 ## Rationale
 
-Centralizing all auth in Clerk eliminates the risk of home-grown session bugs, keeps user credential handling off this codebase entirely, and provides a consistent, audited auth layer across every route. The middleware-first approach means a missing auth check on a new route is a visible omission, not a silent gap.
+Auth.js handles the OAuth dance and session cookie; FastAPI gets a short-lived signed token per request. No session state is shared between the two services — only the secret. This keeps the FastAPI backend stateless and independently verifiable.

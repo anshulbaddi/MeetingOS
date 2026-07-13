@@ -1,186 +1,165 @@
 # Data Mutation Standards
 
-## Rule: Server Actions via `/data` Helpers
+## Rule: Client Components call Next.js API routes, which proxy to FastAPI
 
-**All data mutations must go through Server Actions that call helper functions in `src/data/`. No direct database calls outside of `src/data/`.**
+**All data mutations go through Next.js API route handlers that call FastAPI via `apiFetch()`. No direct database access from Next.js.**
 
-This is a hard rule with no exceptions. Pages, components, and Server Actions must never import from `src/db` directly — all Drizzle ORM calls live in `src/data/` helpers. Server Actions are the only way to trigger mutations from the client.
+Next.js never writes to the database. Client Components call Next.js API routes with `fetch`. Those route handlers validate input with Zod, then call the appropriate FastAPI endpoint. FastAPI owns all database writes.
 
 ## What This Means in Practice
 
-- **Do not** call Drizzle ORM methods (`db.insert`, `db.update`, `db.delete`) anywhere outside of `src/data/`.
-- **Do not** create `app/api/` route handlers to handle mutations.
-- **Do not** accept `FormData` as a Server Action parameter — use typed plain objects instead.
-- **Do not** trust caller-supplied `userId` — always read it from the Clerk session inside the `/data` helper.
-- **Do** write a mutation helper in `src/data/` for every insert, update, or delete operation.
-- **Do** call those helpers from a Server Action defined in a colocated `actions.ts` file.
-- **Do** validate every Server Action's arguments with Zod before passing them to a `/data` helper.
+- **Do not** call the database from Next.js for any mutation.
+- **Do not** call FastAPI directly from Client Components — the JWT signing lives server-side in `apiFetch()`.
+- **Do** create an API route handler for every mutation under `src/app/api/`.
+- **Do** validate inputs with Zod inside the route handler before calling `apiFetch()`.
+- **Do** return proper HTTP error responses (400, 500) with a JSON `{ error: string }` body.
+- **Do** define the corresponding POST/PUT/PATCH/DELETE endpoint in the FastAPI backend.
 
 ## File Structure
 
-Server Actions live in `actions.ts` files colocated with the route that uses them. The corresponding database logic lives in `src/data/`.
-
 ```
 src/
-  data/
-    workouts.ts     ← getWorkouts(), createWorkout(), deleteWorkout(), etc.
-    sets.ts         ← createSet(), updateSet(), deleteSet(), etc.
   app/
+    api/
+      auth/
+        [...nextauth]/
+          route.ts          ← Auth.js OAuth handler (do not modify)
+      analyze/
+        url/route.ts        ← POST /api/analyze/url
+        file/route.ts       ← POST /api/analyze/file
+      responses/
+        [id]/route.ts       ← PATCH /api/responses/[id]
     dashboard/
       page.tsx
-      actions.ts    ← Server Actions for the dashboard route
-    workouts/
-      [id]/
-        page.tsx
-        actions.ts  ← Server Actions for the workout detail route
+      _components/
+        some-form.tsx       ← "use client", calls fetch("/api/...")
+backend/
+  main.py                   ← FastAPI endpoints (or split into routers/)
 ```
 
-## `/data` Mutation Helpers
+## API Route Handlers
 
-Each helper performs a single mutation, scopes it to the authenticated user, and returns a plain object or `void`.
-
-```ts
-// src/data/workouts.ts
-import { db } from "@/db";
-import { workouts } from "@/db/schema";
-import { eq, and } from "drizzle-orm";
-import { auth } from "@clerk/nextjs/server";
-
-export async function createWorkout(name: string) {
-  const { userId } = await auth();
-  if (!userId) throw new Error("Unauthorized");
-
-  const [workout] = await db.insert(workouts).values({ name, userId }).returning();
-  return workout;
-}
-
-export async function deleteWorkout(workoutId: string) {
-  const { userId } = await auth();
-  if (!userId) throw new Error("Unauthorized");
-
-  await db.delete(workouts).where(
-    and(eq(workouts.id, workoutId), eq(workouts.userId, userId))
-  );
-}
-```
-
-Always include the `userId` guard in the `where` clause for updates and deletes — never delete or update based on `id` alone.
-
-## Server Actions
-
-Server Actions are defined in colocated `actions.ts` files. Every action must:
-
-1. Be marked with `"use server"` at the top of the file.
-2. Accept typed parameters — never `FormData`.
-3. Validate all inputs with Zod before calling any `/data` helper.
-4. Call the appropriate `/data` helper to perform the mutation.
+Every route handler must:
+1. Parse the request body with `req.json()` or `req.formData()`.
+2. Validate with Zod — return `{ error }` with status 400 on failure.
+3. Call `apiFetch()` to forward to FastAPI.
+4. Wrap everything in try/catch and return `{ error }` with status 500 on unexpected errors.
 
 ```ts
-// src/app/dashboard/actions.ts
-"use server";
-
+// src/app/api/items/route.ts
+import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { createWorkout } from "@/data/workouts";
+import { apiFetch } from "@/lib/api";
 
-const createWorkoutSchema = z.object({
-  name: z.string().min(1).max(100),
-});
+const schema = z.object({ name: z.string().min(1).max(255) });
 
-export async function createWorkoutAction(params: { name: string }) {
-  const parsed = createWorkoutSchema.safeParse(params);
-  if (!parsed.success) throw new Error("Invalid input");
-
-  return createWorkout(parsed.data.name);
-}
-```
-
-```ts
-// src/app/dashboard/actions.ts (delete example)
-"use server";
-
-import { z } from "zod";
-import { deleteWorkout } from "@/data/workouts";
-
-const deleteWorkoutSchema = z.object({
-  workoutId: z.string().uuid(),
-});
-
-export async function deleteWorkoutAction(params: { workoutId: string }) {
-  const parsed = deleteWorkoutSchema.safeParse(params);
-  if (!parsed.success) throw new Error("Invalid input");
-
-  await deleteWorkout(parsed.data.workoutId);
-}
-```
-
-## Calling Server Actions from Client Components
-
-Import the Server Action directly and call it with a typed object. Do not construct a `FormData` object.
-
-```tsx
-"use client";
-
-import { createWorkoutAction } from "./actions";
-
-export function CreateWorkoutButton() {
-  async function handleClick() {
-    await createWorkoutAction({ name: "Leg Day" });
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json();
+    const parsed = schema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
+    }
+    const result = await apiFetch("/items", {
+      method: "POST",
+      body: JSON.stringify(parsed.data),
+    });
+    return NextResponse.json(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
-
-  return <Button onClick={handleClick}>New Workout</Button>;
 }
 ```
 
-## Rule: No `redirect()` Inside Server Actions
+## FastAPI: Mutation Endpoints
 
-**Never call `redirect()` from `next/navigation` inside a Server Action. Navigation after a mutation is the client's responsibility.**
+Every mutation endpoint must:
+1. Use `get_current_user_id` as a dependency.
+2. Scope all writes to that `user_id` — never write based on a caller-supplied user ID.
+3. Use Pydantic models to validate the request body.
 
-Calling `redirect()` inside a Server Action throws an internal exception that Next.js intercepts to perform the redirect. This mechanism bypasses normal error handling — a `try/catch` in the calling Client Component will catch the redirect throw and treat it as an error, making it impossible to distinguish a successful mutation from a real failure.
+```python
+# backend/main.py
+from pydantic import BaseModel
+from auth import get_current_user_id
+from fastapi import Depends
+from db import get_db
 
-- **Do not** import or call `redirect()` in any `actions.ts` file.
-- **Do** return from the Server Action normally (return the created record or `void`).
-- **Do** perform navigation in the Client Component after the `await` resolves, using `useRouter`.
+class CreateItemRequest(BaseModel):
+    name: str
 
-```ts
-// actions.ts — just mutate and return
-export async function createWorkoutAction(params: CreateWorkoutParams) {
-  const parsed = createWorkoutSchema.safeParse(params);
-  if (!parsed.success) throw new Error("Invalid input");
-
-  return createWorkout(parsed.data);
-}
+@app.post("/items")
+def create_item(
+    body: CreateItemRequest,
+    user_id: str = Depends(get_current_user_id),
+):
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO items (user_id, name) VALUES (%s, %s) RETURNING *",
+                (user_id, body.name),
+            )
+            return cur.fetchone()
 ```
+
+For updates and deletes, always include `AND user_id = %s` in the WHERE clause.
+
+## Calling API Routes from Client Components
 
 ```tsx
-// page.tsx or component — navigate after the action settles
 "use client";
 import { useRouter } from "next/navigation";
-import { createWorkoutAction } from "./actions";
+import { useTransition } from "react";
 
-export function CreateWorkoutForm() {
+export function CreateItemForm() {
   const router = useRouter();
+  const [isPending, startTransition] = useTransition();
 
-  async function handleSubmit() {
-    await createWorkoutAction({ ... });
-    router.push("/dashboard");
+  function handleSubmit() {
+    startTransition(async () => {
+      const res = await fetch("/api/items", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Example" }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      router.push("/dashboard");
+    });
   }
+
+  return <button onClick={handleSubmit} disabled={isPending}>Create</button>;
 }
+```
+
+## File Uploads
+
+For `multipart/form-data` (file uploads), pass `FormData` directly as the body — do not set `Content-Type`. The browser sets the boundary automatically.
+
+```tsx
+// Client Component
+const fd = new FormData(formElement);
+const res = await fetch("/api/analyze/file", { method: "POST", body: fd });
+```
+
+```ts
+// API route handler
+const formData = await req.formData();
+const file = formData.get("file");
+// validate and forward to FastAPI
 ```
 
 ## Zod Validation Rules
 
-- Every parameter the action receives must be covered by the Zod schema — no unchecked fields.
-- Use `safeParse` and throw on failure so the error surfaces clearly rather than propagating corrupt data.
-- Define the schema in the same file as the action, directly above it.
-- Do not reuse schemas between actions unless they are genuinely identical — copy and adjust instead.
+- Every input field must be covered by the schema — no unchecked fields.
+- Use `safeParse` and return 400 on failure.
+- Define the schema directly above the handler in the same file.
 
-## Security: Ownership Checks in `/data` Helpers
+## Security
 
-The Server Action validates shape; the `/data` helper enforces ownership. Both layers are required.
-
-- The `/data` helper always calls `auth()` and adds a `userId` condition to every write query.
-- A missing `userId` guard on an update or delete is a critical security bug — a user could modify another user's rows by supplying a foreign `id`.
+Next.js validates shape (Zod). FastAPI enforces ownership (`user_id` from the JWT, never from the request body). Both layers are required — Zod alone does not prevent a user from mutating another user's data.
 
 ## Rationale
 
-Keeping all Drizzle calls inside `src/data/` gives one place to audit database access. Colocating `actions.ts` with the route that triggers mutations makes the data flow obvious without a separate API layer. Typed parameters (not `FormData`) and Zod validation eliminate an entire class of malformed-input bugs before they reach the database.
+API routes are explicit HTTP endpoints that live at predictable URLs, making the mutation surface easy to audit. They work naturally with `fetch` from Client Components and correctly handle both JSON and multipart bodies. The JWT signing needed to talk to FastAPI happens inside `apiFetch()`, which is server-only — API route handlers run on the server, so they can call `apiFetch()` safely.

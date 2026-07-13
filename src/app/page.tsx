@@ -1,72 +1,117 @@
-import { auth } from "@clerk/nextjs/server";
-import { redirect } from "next/navigation";
-import Image from "next/image";
+import Link from "next/link";
+import { auth, signIn } from "@/auth";
+import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
+import { LandingChat } from "./_components/landing-chat";
+import { StickyFeatures } from "./_components/sticky-features";
 
 export default async function Home() {
-  const { userId } = await auth();
-  if (userId) {
-    redirect("/dashboard");
-  }
+  const session = await auth();
 
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+    <div className="flex flex-col flex-1">
+      {/* ── Hero ─────────────────────────────────────────────────────── */}
+      <section className="flex-1 max-w-6xl mx-auto w-full px-6 py-16 lg:py-24">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-16 items-start">
+
+          {/* Left — headline + CTA */}
+          <div className="flex flex-col gap-6 lg:pt-4">
+            <div className="flex flex-col gap-4">
+              <h1 className="text-4xl lg:text-5xl font-bold tracking-tight leading-[1.1]">
+                Your meetings,<br />
+                <span className="text-muted-foreground">actually searchable.</span>
+              </h1>
+              <p className="text-lg text-muted-foreground leading-relaxed max-w-md">
+                Upload a recording. Get a full transcript, extract key decisions, ask questions,
+                and catch contradictions — all in one place.
+              </p>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-3">
+              {session ? (
+                <Button asChild size="lg" className="w-fit">
+                  <Link href="/dashboard">Go to dashboard →</Link>
+                </Button>
+              ) : (
+                <form
+                  action={async () => {
+                    "use server";
+                    await signIn("google", { redirectTo: "/dashboard" });
+                  }}
+                >
+                  <Button type="submit" size="lg">
+                    Get started free →
+                  </Button>
+                </form>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-2 pt-2">
+              {[
+                "Transcription in minutes, not hours",
+                "Ask questions, get cited answers",
+                "Contradictions flagged automatically",
+              ].map((item) => (
+                <div key={item} className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <span className="text-foreground">✓</span>
+                  {item}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Right — live demo chatbot */}
+          <div className="flex flex-col gap-3">
+            <p className="text-xs text-muted-foreground font-medium uppercase tracking-widest">
+              Try it — no sign-in needed
+            </p>
+            <LandingChat />
+          </div>
+        </div>
+      </section>
+
+      <Separator />
+
+      {/* ── Features ─────────────────────────────────────────────────── */}
+      <section className="max-w-6xl mx-auto w-full px-6">
+        <div className="py-16 lg:py-20">
+          <p className="text-xs text-muted-foreground font-medium uppercase tracking-widest mb-2">
+            How it works
           </p>
+          <h2 className="text-3xl font-bold tracking-tight">
+            Everything your team needs<br className="hidden lg:block" /> from a meeting.
+          </h2>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+        <StickyFeatures />
+      </section>
+
+      <Separator />
+
+      {/* ── Final CTA ────────────────────────────────────────────────── */}
+      <section className="max-w-6xl mx-auto w-full px-6 py-24 flex flex-col items-center text-center gap-6">
+        <h2 className="text-3xl lg:text-4xl font-bold tracking-tight">
+          So, what are we building?
+        </h2>
+        <p className="text-muted-foreground text-lg max-w-md">
+          Sign in with Google and upload your first meeting. It takes about 30 seconds.
+        </p>
+        {session ? (
+          <Button asChild size="lg">
+            <Link href="/dashboard">Open dashboard →</Link>
+          </Button>
+        ) : (
+          <form
+            action={async () => {
+              "use server";
+              await signIn("google", { redirectTo: "/dashboard" });
+            }}
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+            <Button type="submit" size="lg">
+              Get started free →
+            </Button>
+          </form>
+        )}
+      </section>
     </div>
   );
 }
