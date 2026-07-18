@@ -33,6 +33,17 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
+# Python
+backend/.venv/
+backend/mcp_venv/
+backend/__pycache__/
+backend/**/__pycache__/
+*.pyc
+*.pyo
+backend/dump.rdb
+backend/uploads/
+backend/eval_reports/
+
 # MCP config contains machine-specific absolute paths
 backend/mcp_config.json
 
