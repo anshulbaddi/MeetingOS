@@ -3,8 +3,8 @@
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 
 export function UploadForm() {
   const router = useRouter();
@@ -42,9 +42,9 @@ export function UploadForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-3">
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="meeting-file">Recording file</Label>
+    <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+      <div className="flex flex-col gap-2">
+        <Label htmlFor="meeting-file">Audio or video file</Label>
         <Input
           id="meeting-file"
           type="file"
@@ -55,14 +55,20 @@ export function UploadForm() {
           className="cursor-pointer"
         />
         <p className="text-xs text-muted-foreground">
-          mp3, mp4, wav, m4a, webm, ogg, mov
+          mp3 · mp4 · wav · m4a · webm · ogg · mov — up to 500 MB
         </p>
       </div>
 
-      {error && <p className="text-sm text-red-500">{error}</p>}
+      {fileName && (
+        <p className="text-xs text-muted-foreground truncate">
+          Selected: <span className="text-foreground">{fileName}</span>
+        </p>
+      )}
 
-      <Button type="submit" disabled={!fileName || isPending} className="w-fit">
-        {isPending ? "Uploading..." : "Upload & transcribe"}
+      {error && <p className="text-sm text-destructive">{error}</p>}
+
+      <Button type="submit" disabled={!fileName || isPending} className="w-full">
+        {isPending ? "Uploading…" : "Upload & transcribe"}
       </Button>
     </form>
   );

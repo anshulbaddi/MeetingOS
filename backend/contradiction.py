@@ -1,24 +1,13 @@
+import json
 import uuid
 
-from openai import OpenAI
 from pgvector.psycopg2 import register_vector
 from pydantic import BaseModel
 
 from db import get_db
+from llm import chat_complete, embed_texts
 
-EMBEDDING_MODEL = "text-embedding-3-small"
-# Decisions with cosine similarity above this are "on the same topic"
-# and get sent to GPT-4o for a contradiction check.
 SIMILARITY_THRESHOLD = 0.45
-
-_client = None
-
-
-def get_client() -> OpenAI:
-    global _client
-    if _client is None:
-        _client = OpenAI()
-    return _client
 
 
 class ContradictionCheck(BaseModel):
@@ -27,10 +16,8 @@ class ContradictionCheck(BaseModel):
 
 
 def _check_contradiction(text_a: str, text_b: str) -> ContradictionCheck:
-    client = get_client()
-    result = client.beta.chat.completions.parse(
-        model="gpt-4o",
-        messages=[
+    result = chat_complete(
+        [
             {
                 "role": "system",
                 "content": (
@@ -38,7 +25,8 @@ def _check_contradiction(text_a: str, text_b: str) -> ContradictionCheck:
                     "whether they contradict each other. A contradiction means the two "
                     "decisions cannot both be true at the same time — one reverses, "
                     "overrides, or conflicts with the other. Similar topics alone are "
-                    "not a contradiction."
+                    "not a contradiction. "
+                    'Return ONLY a JSON object: {"contradicts": boolean, "explanation": string}'
                 ),
             },
             {
@@ -46,9 +34,10 @@ def _check_contradiction(text_a: str, text_b: str) -> ContradictionCheck:
                 "content": f"Decision A: {text_a}\n\nDecision B: {text_b}",
             },
         ],
-        response_format=ContradictionCheck,
+        response_format={"type": "json_object"},
     )
-    return result.choices[0].message.parsed
+    data = json.loads(result.choices[0].message.content)
+    return ContradictionCheck(**data)
 
 
 def detect_contradictions(meeting_id: str, user_id: str) -> None:
@@ -60,8 +49,6 @@ def detect_contradictions(meeting_id: str, user_id: str) -> None:
       3. Ask GPT-4o whether each similar pair actually contradicts.
       4. Write confirmed contradictions to the conflicts table.
     """
-    client = get_client()
-
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -73,10 +60,8 @@ def detect_contradictions(meeting_id: str, user_id: str) -> None:
     if not new_decisions:
         return
 
-    # Embed all new decisions in one batch
     texts = [d["text"] for d in new_decisions]
-    response = client.embeddings.create(model=EMBEDDING_MODEL, input=texts)
-    vectors = [item.embedding for item in response.data]
+    vectors = embed_texts(texts)
 
     # Write embeddings back
     with get_db() as conn:

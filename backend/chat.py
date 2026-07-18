@@ -1,34 +1,24 @@
 """
 Optimized RAG chat pipeline for meeting segments.
 
-  1. Query rewriting   — gpt-4o-mini rewrites the question into a tighter search query
+  1. Query rewriting   — Llama 3.1 8B (Groq) rewrites the question into a tighter search query
   2. Hybrid retrieval  — four search arms (vector × 2, keyword × 2) merged with RRF
-  3. LLM re-ranking    — gpt-4o picks the best FINAL_K from RETRIEVAL_K candidates
-  4. Answer generation — gpt-4o answers using only the re-ranked context
+  3. LLM re-ranking    — Llama 3.1 8B (Groq) picks the best FINAL_K from RETRIEVAL_K candidates
+  4. Answer generation — Llama 3.1 8B (Groq) answers using only the re-ranked context
 """
 
 import json
 import uuid
 from typing import List
 
-from openai import OpenAI
 from pgvector.psycopg2 import register_vector
 
 from db import get_db
+from llm import chat_complete, embed_text
 
-EMBEDDING_MODEL = "text-embedding-3-small"
 RETRIEVAL_K = 15   # candidates per search arm before merging
 FINAL_K = 5        # kept after re-ranking
 RRF_K = 60         # standard RRF constant
-
-_client = None
-
-
-def get_client() -> OpenAI:
-    global _client
-    if _client is None:
-        _client = OpenAI()
-    return _client
 
 
 def _format_time(secs: float) -> str:
@@ -37,19 +27,14 @@ def _format_time(secs: float) -> str:
     return f"{m}:{s:02d}"
 
 
-def _embed(client: OpenAI, text: str) -> List[float]:
-    return client.embeddings.create(model=EMBEDDING_MODEL, input=[text]).data[0].embedding
-
-
-def _rewrite_query(client: OpenAI, question: str) -> str:
+def _rewrite_query(question: str) -> str:
     """
-    gpt-4o-mini reformulates the question into a short, precise search query.
+    Llama 3.1 8B reformulates the question into a short, precise search query.
     Running dual queries (original + rewritten) improves recall for conversational
     questions whose wording differs from the transcript's phrasing.
     """
-    resp = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
+    resp = chat_complete(
+        [
             {
                 "role": "system",
                 "content": (
@@ -60,6 +45,7 @@ def _rewrite_query(client: OpenAI, question: str) -> str:
             },
             {"role": "user", "content": question},
         ],
+        use_cache=True,
     )
     return resp.choices[0].message.content.strip()
 
@@ -157,11 +143,10 @@ def _rrf_merge(ranked_lists: List[List[dict]]) -> List[dict]:
     return [segments[sid] for sid in order]
 
 
-def _rerank(client: OpenAI, question: str, candidates: List[dict]) -> List[dict]:
+def _rerank(question: str, candidates: List[dict]) -> List[dict]:
     """
-    LLM re-ranker: ask gpt-4o to sort the candidates by relevance and keep FINAL_K.
-    This is the most expensive step but ensures the best chunks are at the top of
-    the context window where the model attends to them most strongly.
+    LLM re-ranker: Llama 3.1 8B sorts the candidates by relevance and keeps FINAL_K.
+    This ensures the best chunks are at the top of the context window.
     """
     if len(candidates) <= FINAL_K:
         return candidates
@@ -170,9 +155,8 @@ def _rerank(client: OpenAI, question: str, candidates: List[dict]) -> List[dict]
         f"CHUNK {i + 1}: [{_format_time(seg['start_sec'])}] {seg.get('text', '')}"
         for i, seg in enumerate(candidates)
     )
-    resp = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
+    resp = chat_complete(
+        [
             {
                 "role": "system",
                 "content": (
@@ -209,14 +193,12 @@ def ask_meeting(meeting_id: str, user_id: str, question: str) -> dict:
     Full RAG pipeline: rewrite → hybrid retrieval (RRF) → LLM rerank → generate.
     Returns the same shape as before plus `rewritten_query` for debugging.
     """
-    client = get_client()
-
     # ── 1. Query rewriting ────────────────────────────────────────────────────
-    rewritten = _rewrite_query(client, question)
+    rewritten = _rewrite_query(question)
 
     # ── 2. Embed both queries ─────────────────────────────────────────────────
-    original_vec = _embed(client, question)
-    rewritten_vec = _embed(client, rewritten)
+    original_vec = embed_text(question)
+    rewritten_vec = embed_text(rewritten)
 
     # ── 3. Four search arms → RRF merge ──────────────────────────────────────
     with get_db() as conn:
@@ -232,7 +214,7 @@ def ask_meeting(meeting_id: str, user_id: str, question: str) -> dict:
         raise ValueError("No segments found for this meeting.")
 
     # ── 4. LLM re-ranking ────────────────────────────────────────────────────
-    top = _rerank(client, question, candidates)
+    top = _rerank(question, candidates)
 
     # ── 5. Build context ──────────────────────────────────────────────────────
     context = "\n".join(
@@ -240,9 +222,8 @@ def ask_meeting(meeting_id: str, user_id: str, question: str) -> dict:
     )
 
     # ── 6. Answer generation ──────────────────────────────────────────────────
-    completion = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
+    completion = chat_complete(
+        [
             {
                 "role": "system",
                 "content": (

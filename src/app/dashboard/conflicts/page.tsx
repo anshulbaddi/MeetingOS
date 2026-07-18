@@ -54,7 +54,7 @@ export default async function ConflictsPage() {
   }
 
   return (
-    <main className="max-w-2xl mx-auto w-full px-6 py-10 flex flex-col gap-8">
+    <main className="px-8 py-8 max-w-4xl flex flex-col gap-8">
       <div>
         <h1 className="text-xl font-medium">Conflicts</h1>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -103,9 +103,6 @@ export default async function ConflictsPage() {
         </p>
       )}
 
-      <Link href="/dashboard" className="text-xs text-muted-foreground hover:text-foreground">
-        ← Back to dashboard
-      </Link>
     </main>
   );
 }

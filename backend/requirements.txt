@@ -14,3 +14,9 @@ flower>=2.0.0
 redis>=5.0.0
 slowapi==0.1.9
 duckduckgo-search==8.1.1
+langgraph>=0.2.0
+torch>=2.0.0
+torchvision>=0.15.0
+Pillow>=10.0.0
+opencv-python==4.10.0.84
+numpy<2.0

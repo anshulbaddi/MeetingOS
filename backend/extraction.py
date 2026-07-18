@@ -2,20 +2,11 @@ import json
 import uuid
 from typing import Optional
 
-from openai import OpenAI
 from pydantic import BaseModel
 
 from db import get_db
 from contradiction import detect_contradictions
-
-_client = None
-
-
-def get_client() -> OpenAI:
-    global _client
-    if _client is None:
-        _client = OpenAI()
-    return _client
+from llm import chat_complete
 
 
 class DecisionItem(BaseModel):
@@ -33,9 +24,9 @@ class ExtractionResult(BaseModel):
 
 def extract_meeting_meta(meeting_id: str) -> None:
     """
-    Reads segments for a completed meeting, calls GPT-4o with structured
-    outputs to extract summary / action items / participants / decisions,
-    then writes the results to meeting_meta and decisions tables.
+    Reads segments for a completed meeting, calls the LLM to extract
+    summary / action items / participants / decisions, then writes results
+    to meeting_meta and decisions tables.
     """
     with get_db() as conn:
         with conn.cursor() as cur:
@@ -57,25 +48,32 @@ def extract_meeting_meta(meeting_id: str) -> None:
         for s in segments
     )
 
-    client = get_client()
-    response = client.beta.chat.completions.parse(
-        model="gpt-4o",
-        messages=[
+    response = chat_complete(
+        [
             {
                 "role": "system",
                 "content": (
                     "You extract structured information from meeting transcripts. "
                     "Be concise. For decisions, set start_sec to the number of seconds "
                     "shown in the timestamp closest to where the decision was made "
-                    "(e.g. [1:30] → 90.0). If no clear decisions were made, return an empty list."
+                    "(e.g. [1:30] → 90.0). If no clear decisions were made, return an empty list. "
+                    "Return ONLY a JSON object with this exact schema:\n"
+                    '{"summary": string, "action_items": [string], '
+                    '"participants": [string], '
+                    '"decisions": [{"text": string, "context": string, "start_sec": number|null}]}'
                 ),
             },
             {"role": "user", "content": f"Transcript:\n\n{transcript}"},
         ],
-        response_format=ExtractionResult,
+        response_format={"type": "json_object"},
     )
 
-    meta: ExtractionResult = response.choices[0].message.parsed
+    data = json.loads(response.choices[0].message.content)
+    # Normalize decisions to ensure they have the required fields
+    for d in data.get("decisions", []):
+        d.setdefault("context", "")
+        d.setdefault("start_sec", None)
+    meta = ExtractionResult(**data)
 
     with get_db() as conn:
         with conn.cursor() as cur:

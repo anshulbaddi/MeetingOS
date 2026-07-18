@@ -7,34 +7,19 @@ but scoped to all meetings for a user instead of a single meeting.
 
 from typing import List
 
-from openai import OpenAI
 from pgvector.psycopg2 import register_vector
 
 from db import get_db
+from llm import chat_complete, embed_text
 
-EMBEDDING_MODEL = "text-embedding-3-small"
 RETRIEVAL_K = 15
 FINAL_K = 8
 RRF_K = 60
 
-_client = None
 
-
-def _get_client() -> OpenAI:
-    global _client
-    if _client is None:
-        _client = OpenAI()
-    return _client
-
-
-def _embed(client: OpenAI, text: str) -> List[float]:
-    return client.embeddings.create(model=EMBEDDING_MODEL, input=[text]).data[0].embedding
-
-
-def _rewrite_query(client: OpenAI, question: str) -> str:
-    resp = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
+def _rewrite_query(question: str) -> str:
+    resp = chat_complete(
+        [
             {
                 "role": "system",
                 "content": (
@@ -45,6 +30,7 @@ def _rewrite_query(client: OpenAI, question: str) -> str:
             },
             {"role": "user", "content": question},
         ],
+        use_cache=True,
     )
     return resp.choices[0].message.content.strip()
 
@@ -150,11 +136,9 @@ def cross_meeting_search(user_id: str, query: str) -> List[dict]:
     Searches enriched chunks when available; falls back to raw segments.
     Returns up to FINAL_K results with meeting context.
     """
-    client = _get_client()
-
-    rewritten = _rewrite_query(client, query)
-    orig_vec = _embed(client, query)
-    rewr_vec = _embed(client, rewritten)
+    rewritten = _rewrite_query(query)
+    orig_vec = embed_text(query)
+    rewr_vec = embed_text(rewritten)
 
     with get_db() as conn:
         register_vector(conn)

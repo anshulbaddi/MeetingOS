@@ -21,24 +21,14 @@ The chunks table is what chat.py searches.
 import json
 from typing import List, Dict
 
-from openai import OpenAI
 from pgvector.psycopg2 import register_vector
 
 from db import get_db
+from llm import chat_complete, embed_texts
 
-EMBEDDING_MODEL = "text-embedding-3-small"
 TARGET_WORDS  = 75   # aim for chunks of this size
 OVERLAP_WORDS = 20   # leading overlap from the previous chunk (~27%)
-EMBED_BATCH   = 20   # embeddings per OpenAI API call
 
-_client = None
-
-
-def _get_client() -> OpenAI:
-    global _client
-    if _client is None:
-        _client = OpenAI()
-    return _client
 
 
 # ── Merging ────────────────────────────────────────────────────────────────────
@@ -95,17 +85,16 @@ def _merge_into_chunks(segments: List[Dict]) -> List[Dict]:
 
 # ── Enrichment ─────────────────────────────────────────────────────────────────
 
-def _enrich(client: OpenAI, chunks: List[Dict], meeting_title: str) -> List[Dict]:
+def _enrich(chunks: List[Dict], meeting_title: str) -> List[Dict]:
     """
-    Add a headline and 2-sentence summary to each chunk via GPT-4o-mini.
+    Add a headline and 2-sentence summary to each chunk via the LLM.
     The enriched text is what gets embedded, making retrieval work for
     conversational queries that don't match the transcript's exact wording.
     """
     enriched = []
     for chunk in chunks:
-        resp = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
+        resp = chat_complete(
+            [
                 {
                     "role": "system",
                     "content": (
@@ -139,21 +128,12 @@ def _enrich(client: OpenAI, chunks: List[Dict], meeting_title: str) -> List[Dict
 
 # ── Embedding ──────────────────────────────────────────────────────────────────
 
-def _embed(client: OpenAI, chunks: List[Dict]) -> List[List[float]]:
-    """
-    Embed  headline + summary + body  for each chunk.
-    Batched to stay under the OpenAI request size limit.
-    """
+def _embed(chunks: List[Dict]) -> List[List[float]]:
     texts = [
         f"{c['headline']}\n\n{c['summary']}\n\n{c['body']}"
         for c in chunks
     ]
-    vectors: List[List[float]] = []
-    for i in range(0, len(texts), EMBED_BATCH):
-        batch = texts[i : i + EMBED_BATCH]
-        resp  = client.embeddings.create(model=EMBEDDING_MODEL, input=batch)
-        vectors.extend(item.embedding for item in resp.data)
-    return vectors
+    return embed_texts(texts)
 
 
 # ── Public entry point ─────────────────────────────────────────────────────────
@@ -165,8 +145,6 @@ def build_chunks(meeting_id: str) -> int:
 
     Returns the number of chunks created.
     """
-    client = _get_client()
-
     # Fetch segments and meeting title
     with get_db() as conn:
         with conn.cursor() as cur:
@@ -191,8 +169,8 @@ def build_chunks(meeting_id: str) -> int:
 
     # Pipeline: merge → enrich → embed → store
     raw      = _merge_into_chunks(segments)
-    enriched = _enrich(client, raw, meeting_title)
-    vectors  = _embed(client, enriched)
+    enriched = _enrich(raw, meeting_title)
+    vectors  = _embed(enriched)
 
     with get_db() as conn:
         register_vector(conn)

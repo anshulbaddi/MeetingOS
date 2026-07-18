@@ -1,25 +1,15 @@
-from openai import OpenAI
 from pgvector.psycopg2 import register_vector
 
 from db import get_db
+from llm import embed_texts
 
-EMBEDDING_MODEL = "text-embedding-3-small"
-BATCH_SIZE = 100  # OpenAI allows up to 2048 inputs per request
-
-_client = None
-
-
-def get_client() -> OpenAI:
-    global _client
-    if _client is None:
-        _client = OpenAI()
-    return _client
+BATCH_SIZE = 100
 
 
 def embed_segments(meeting_id: str) -> None:
     """
-    Fetches all un-embedded segments for a meeting, calls the OpenAI
-    embeddings API in batches, then writes each vector back to the DB.
+    Fetches all un-embedded segments for a meeting, embeds them (with Redis
+    caching), then writes each vector back to the DB.
     """
     with get_db() as conn:
         register_vector(conn)
@@ -37,14 +27,7 @@ def embed_segments(meeting_id: str) -> None:
 
     ids = [r["id"] for r in rows]
     texts = [r["text"] for r in rows]
-
-    client = get_client()
-    vectors = []
-
-    for i in range(0, len(texts), BATCH_SIZE):
-        batch = texts[i : i + BATCH_SIZE]
-        response = client.embeddings.create(model=EMBEDDING_MODEL, input=batch)
-        vectors.extend([item.embedding for item in response.data])
+    vectors = embed_texts(texts)
 
     with get_db() as conn:
         register_vector(conn)

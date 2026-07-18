@@ -12,18 +12,11 @@ from fastapi.responses import StreamingResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
-from openai import OpenAI
 from pydantic import BaseModel
 
 import jwt as pyjwt
 
-_openai_client = None
-
-def _get_openai() -> OpenAI:
-    global _openai_client
-    if _openai_client is None:
-        _openai_client = OpenAI()
-    return _openai_client
+from llm import chat_complete
 
 PUBLIC_CHAT_SYSTEM_PROMPT = """You are a helpful assistant for MeetingOS, an AI-powered meeting intelligence platform. Help visitors understand the product.
 
@@ -92,11 +85,7 @@ async def public_chat(
         messages.append({"role": h.role, "content": h.content})
     messages.append({"role": "user", "content": message[:500]})
 
-    response = _get_openai().chat.completions.create(
-        model="gpt-4o-mini",
-        messages=messages,
-        max_tokens=300,
-    )
+    response = chat_complete(messages, max_tokens=300)
     return {"reply": response.choices[0].message.content}
 
 

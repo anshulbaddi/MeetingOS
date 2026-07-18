@@ -102,13 +102,13 @@ export default async function MeetingPage({
   const chatHistory = await getChatHistory(id);
 
   return (
-    <main className="max-w-2xl mx-auto w-full px-6 py-10 flex flex-col gap-8">
+    <main className="px-8 py-8 max-w-4xl flex flex-col gap-8">
       <div>
         <Link
           href="/dashboard"
-          className="text-sm text-muted-foreground hover:text-foreground"
+          className="text-xs text-muted-foreground hover:text-foreground"
         >
-          ← back
+          ← Meetings
         </Link>
         <div className="mt-4 flex items-center gap-3">
           <h1 className="text-xl font-medium truncate">{meeting.title}</h1>
