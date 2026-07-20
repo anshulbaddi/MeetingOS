@@ -34,6 +34,25 @@ from llm import chat_complete
 from search import cross_meeting_search
 from chat import ask_meeting as _ask_meeting
 
+_ROLE_MAP = {"human": "user", "ai": "assistant", "system": "system", "tool": "tool"}
+
+
+def _to_oai(msg) -> dict:
+    """Convert a LangChain BaseMessage (or plain dict) to an OpenAI-compatible dict."""
+    if isinstance(msg, dict):
+        return msg
+    role = _ROLE_MAP.get(getattr(msg, "type", ""), "user")
+    d: dict = {"role": role, "content": getattr(msg, "content", "") or ""}
+    # tool_call_id is on ToolMessage
+    tool_call_id = getattr(msg, "tool_call_id", None)
+    if tool_call_id:
+        d["tool_call_id"] = tool_call_id
+    # tool_calls live in additional_kwargs on AIMessage (OpenAI format)
+    tool_calls = getattr(msg, "additional_kwargs", {}).get("tool_calls")
+    if tool_calls:
+        d["tool_calls"] = tool_calls
+    return d
+
 GITHUB_API = "https://api.github.com"
 MEMBERS = ["meeting_agent", "conflict_agent", "web_agent", "github_agent"]
 
@@ -380,8 +399,9 @@ Respond ONLY with valid JSON: {"next": "meeting_agent"|"conflict_agent"|"web_age
 
 
 def supervisor_node(state: AgentState) -> dict:
+    history = [_to_oai(m) for m in state["messages"]]
     resp = chat_complete(
-        [{"role": "system", "content": _ROUTING_PROMPT}, *state["messages"]],
+        [{"role": "system", "content": _ROUTING_PROMPT}, *history],
         response_format={"type": "json_object"},
     )
     try:
@@ -401,7 +421,7 @@ def supervisor_node(state: AgentState) -> dict:
                         "final answer based on all the information gathered by your team."
                     ),
                 },
-                *state["messages"],
+                *history,
             ],
         )
         answer = synth.choices[0].message.content or "Task complete."
@@ -425,7 +445,7 @@ def _run_specialist(state: AgentState, tools: list, system_prompt: str) -> dict:
     """
     user_id = state["user_id"]
     # Build a local message list (plain dicts, safe to pass to any OpenAI-compatible API)
-    local_msgs: list = [{"role": "system", "content": system_prompt}, *state["messages"]]
+    local_msgs: list = [{"role": "system", "content": system_prompt}, *[_to_oai(m) for m in state["messages"]]]
     new_messages: list = []
     events: list = []
 

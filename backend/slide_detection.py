@@ -4,81 +4,74 @@ from typing import Optional
 
 import cv2
 import numpy as np
-import torch
-import torch.nn as nn
-from PIL import Image
-from torchvision import models, transforms
+import pytesseract
 
 from db import get_db
 
+# macOS: Homebrew tesseract may be shadowed by an older /usr/local/bin copy.
+pytesseract.pytesseract.tesseract_cmd = "/opt/homebrew/bin/tesseract"
+
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".webm"}
 
-# Cosine similarity below this threshold = slide changed.
-# ResNet features: 1.0 = identical frames, lower = more different.
-CHANGE_THRESHOLD = 0.90
+# Jaccard word-set similarity below this threshold = slide changed.
+# 0.0 = nothing in common, 1.0 = identical word sets.
+CHANGE_THRESHOLD = 0.35
 
 # Minimum seconds between detected transitions (debounce).
 MIN_TRANSITION_GAP = 1.5
 
-# ImageNet normalisation — required for pretrained ResNet weights.
-_TRANSFORM = transforms.Compose([
-    transforms.Resize(256),
-    transforms.CenterCrop(224),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-])
-
-_model: Optional[nn.Module] = None
-_device: Optional[torch.device] = None
+# Tesseract page-segmentation mode 6: "assume a single uniform block of text"
+# Works well for slides which are dominated by a few text blocks.
+_TESS_CONFIG = "--psm 6"
 
 
-def _get_model() -> tuple[nn.Module, torch.device]:
-    """Lazy-load ResNet-50 once per process, stripped of its classifier head."""
-    global _model, _device
-    if _model is None:
-        if torch.backends.mps.is_available():
-            device = torch.device("mps")       # Apple Silicon GPU
-        elif torch.cuda.is_available():
-            device = torch.device("cuda")
-        else:
-            device = torch.device("cpu")
+def _extract_text(frame: np.ndarray) -> str:
+    """
+    OCR a single BGR frame and return cleaned lowercase text.
 
-        # Load pretrained ResNet-50 and drop the final FC layer so we get
-        # 2048-dim feature vectors instead of 1000-class logits.
-        base = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V2)
-        model = nn.Sequential(*list(base.children())[:-1])
-        model = model.to(device)
-        model.eval()
+    Steps:
+    1. Upscale to at least 1280 px wide — Tesseract accuracy degrades on
+       small images; presentation recordings are often 720p or lower.
+    2. Convert to greyscale.
+    3. Otsu threshold → binary image. Removes colour noise and makes text
+       crisp, which is exactly what Tesseract expects.
+    """
+    h, w = frame.shape[:2]
+    if w < 1280:
+        scale = 1280 / w
+        frame = cv2.resize(
+            frame,
+            (int(w * scale), int(h * scale)),
+            interpolation=cv2.INTER_LANCZOS4,
+        )
 
-        _model = model
-        _device = device
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-    return _model, _device
-
-
-def _extract_features(frame: np.ndarray) -> np.ndarray:
-    """Run a single BGR frame through ResNet-50 → return (2048,) feature vector."""
-    model, device = _get_model()
-
-    # OpenCV uses BGR; PIL and torchvision expect RGB.
-    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    tensor = _TRANSFORM(Image.fromarray(rgb)).unsqueeze(0).to(device)
-
-    with torch.no_grad():
-        features = model(tensor)           # (1, 2048, 1, 1)
-
-    return features.squeeze().cpu().numpy()   # (2048,)
+    return pytesseract.image_to_string(binary, config=_TESS_CONFIG).strip().lower()
 
 
-def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
-    denom = np.linalg.norm(a) * np.linalg.norm(b)
-    return float(np.dot(a, b) / denom) if denom > 0 else 0.0
+def _jaccard(a: str, b: str) -> float:
+    """
+    Word-set Jaccard similarity: |A ∩ B| / |A ∪ B|.
+    Returns 1.0 when both strings are empty (same blank slide).
+    """
+    set_a = set(a.split())
+    set_b = set(b.split())
+    if not set_a and not set_b:
+        return 1.0
+    union = set_a | set_b
+    return len(set_a & set_b) / len(union)
 
 
 def detect_slide_transitions(file_path: str) -> list[dict]:
     """
-    Samples one frame per second, extracts ResNet-50 features, and returns
-    a list of {start_sec: float} dicts for each detected slide transition.
+    Samples one frame per second, OCRs each frame, and returns a list of
+    {start_sec: float} dicts for each detected slide transition.
+
+    A transition is recorded when the Jaccard similarity of consecutive
+    frames' word sets drops below CHANGE_THRESHOLD, subject to a minimum
+    gap of MIN_TRANSITION_GAP seconds between transitions.
     """
     cap = cv2.VideoCapture(file_path)
     if not cap.isOpened():
@@ -88,7 +81,7 @@ def detect_slide_transitions(file_path: str) -> list[dict]:
     sample_interval = int(fps)
 
     transitions: list[dict] = []
-    prev_features: Optional[np.ndarray] = None
+    prev_text: Optional[str] = None
     last_transition_sec = -MIN_TRANSITION_GAP
     frame_index = 0
 
@@ -99,10 +92,10 @@ def detect_slide_transitions(file_path: str) -> list[dict]:
 
         if frame_index % sample_interval == 0:
             timestamp = frame_index / fps
-            features = _extract_features(frame)
+            text = _extract_text(frame)
 
-            if prev_features is not None:
-                similarity = _cosine_similarity(prev_features, features)
+            if prev_text is not None:
+                similarity = _jaccard(prev_text, text)
                 if (
                     similarity < CHANGE_THRESHOLD
                     and (timestamp - last_transition_sec) >= MIN_TRANSITION_GAP
@@ -110,7 +103,7 @@ def detect_slide_transitions(file_path: str) -> list[dict]:
                     transitions.append({"start_sec": round(timestamp, 2)})
                     last_transition_sec = timestamp
 
-            prev_features = features
+            prev_text = text
 
         frame_index += 1
 

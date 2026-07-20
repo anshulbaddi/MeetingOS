@@ -102,7 +102,7 @@ export default async function MeetingPage({
   const chatHistory = await getChatHistory(id);
 
   return (
-    <main className="px-8 py-8 max-w-4xl flex flex-col gap-8">
+    <main className="px-8 py-8 flex flex-col gap-8 max-w-5xl">
       <div>
         <Link
           href="/dashboard"
@@ -120,7 +120,7 @@ export default async function MeetingPage({
                   ? "destructive"
                   : "secondary"
             }
-            className="shrink-0 text-xs"
+            className={`shrink-0 text-xs ${meeting.status === "complete" ? "bg-[#2D8CFF]/10 text-[#2D8CFF] border-[#2D8CFF]/20" : ""}`}
           >
             {meeting.status}
           </Badge>

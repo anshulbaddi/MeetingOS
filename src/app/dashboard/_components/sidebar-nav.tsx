@@ -31,7 +31,7 @@ export function SidebarNav() {
                 : "text-muted-foreground hover:text-foreground hover:bg-zinc-100 dark:hover:bg-zinc-800",
             ].join(" ")}
           >
-            <Icon className="h-4 w-4 shrink-0" />
+            <Icon className={`h-4 w-4 shrink-0 ${isActive ? "text-[#2D8CFF]" : ""}`} />
             {label}
           </Link>
         );

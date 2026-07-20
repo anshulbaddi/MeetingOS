@@ -47,7 +47,7 @@ export function SearchBar() {
         placeholder="Search across all meetings..."
         value={query}
         onChange={handleChange}
-        className="text-sm"
+        className="text-sm focus-visible:ring-[#2D8CFF]/25 focus-visible:border-[#2D8CFF]"
       />
 
       {isPending && (

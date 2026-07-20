@@ -9,6 +9,12 @@ from contradiction import detect_contradictions
 from llm import chat_complete
 
 
+class ActionItem(BaseModel):
+    text: str
+    assignee: Optional[str] = None
+    due: Optional[str] = None
+
+
 class DecisionItem(BaseModel):
     text: str
     context: str
@@ -17,7 +23,7 @@ class DecisionItem(BaseModel):
 
 class ExtractionResult(BaseModel):
     summary: str
-    action_items: list[str]
+    action_items: list[ActionItem]
     participants: list[str]
     decisions: list[DecisionItem]
 
@@ -57,8 +63,11 @@ def extract_meeting_meta(meeting_id: str) -> None:
                     "Be concise. For decisions, set start_sec to the number of seconds "
                     "shown in the timestamp closest to where the decision was made "
                     "(e.g. [1:30] → 90.0). If no clear decisions were made, return an empty list. "
+                    "For action items, extract who is responsible (assignee) and any deadline (due) "
+                    "if mentioned; otherwise set them to null. "
                     "Return ONLY a JSON object with this exact schema:\n"
-                    '{"summary": string, "action_items": [string], '
+                    '{"summary": string, '
+                    '"action_items": [{"text": string, "assignee": string|null, "due": string|null}], '
                     '"participants": [string], '
                     '"decisions": [{"text": string, "context": string, "start_sec": number|null}]}'
                 ),
@@ -84,7 +93,7 @@ def extract_meeting_meta(meeting_id: str) -> None:
                     str(uuid.uuid4()),
                     meeting_id,
                     meta.summary,
-                    json.dumps(meta.action_items),
+                    json.dumps([item.model_dump() for item in meta.action_items]),
                     json.dumps(meta.participants),
                 ),
             )

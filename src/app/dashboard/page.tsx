@@ -123,7 +123,10 @@ export default async function DashboardPage() {
                           )}
                         </div>
                       </div>
-                      <Badge variant={statusVariant(m.status)} className="shrink-0 text-xs">
+                      <Badge
+                        variant={statusVariant(m.status)}
+                        className={`shrink-0 text-xs ${m.status === "complete" ? "bg-[#2D8CFF]/10 text-[#2D8CFF] border-[#2D8CFF]/20" : ""}`}
+                      >
                         {m.status}
                       </Badge>
                     </CardContent>
