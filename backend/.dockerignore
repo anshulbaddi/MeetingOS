@@ -1,0 +1,12 @@
+.venv
+mcp_venv
+__pycache__
+*.pyc
+*.pyo
+uploads/
+eval_reports/
+dump.rdb
+.env
+mcp_config.json
+Dockerfile
+.dockerignore

@@ -1,0 +1,9 @@
+node_modules
+.next
+.git
+backend
+training
+*.md
+.env*
+.vercel
+coverage

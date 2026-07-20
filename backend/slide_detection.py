@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -8,8 +9,12 @@ import pytesseract
 
 from db import get_db
 
-# macOS: Homebrew tesseract may be shadowed by an older /usr/local/bin copy.
-pytesseract.pytesseract.tesseract_cmd = "/opt/homebrew/bin/tesseract"
+# Allow overriding the tesseract binary path via env var.
+# On macOS with Homebrew, set TESSERACT_CMD=/opt/homebrew/bin/tesseract in .env.
+# In Docker (Linux), the apt-installed binary is on PATH — no override needed.
+_tess_cmd = os.environ.get("TESSERACT_CMD")
+if _tess_cmd:
+    pytesseract.pytesseract.tesseract_cmd = _tess_cmd
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".webm"}
 
