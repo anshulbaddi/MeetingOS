@@ -8,6 +8,7 @@ export default auth((req) => {
     pathname === "/donate" ||
     pathname === "/contact" ||
     pathname.startsWith("/docs") ||
+    pathname.startsWith("/share") ||
     pathname.startsWith("/api/auth") ||
     pathname === "/api/chat/public" ||
     pathname === "/api/donate/checkout" ||

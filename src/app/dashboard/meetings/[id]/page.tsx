@@ -4,6 +4,7 @@ import { apiFetch } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { ProcessingPoller } from "./_components/processing-poller";
 import { MeetingTabs } from "./_components/meeting-tabs";
+import { ShareButton } from "./_components/share-button";
 
 type Segment = {
   id: string;
@@ -124,6 +125,9 @@ export default async function MeetingPage({
           >
             {meeting.status}
           </Badge>
+          {meeting.status === "complete" && (
+            <ShareButton meetingId={id} />
+          )}
         </div>
         <p className="mt-0.5 text-sm text-muted-foreground">
           {formatDate(meeting.created_at)}

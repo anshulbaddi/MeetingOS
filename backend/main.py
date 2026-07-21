@@ -417,6 +417,69 @@ def run_agent(
     )
 
 
+@app.post("/meetings/{meeting_id}/share")
+def create_share(meeting_id: str, user_id: str = Depends(get_current_user_id)):
+    """Generate (or return existing) share token for a meeting."""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT share_token FROM meetings WHERE id = %s AND user_id = %s",
+                (meeting_id, user_id),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404)
+
+            token = row["share_token"]
+            if not token:
+                token = str(uuid.uuid4())
+                cur.execute(
+                    "UPDATE meetings SET share_token = %s WHERE id = %s",
+                    (token, meeting_id),
+                )
+    return {"share_token": token}
+
+
+@app.get("/share/{token}")
+def get_shared_meeting(token: str):
+    """Public endpoint — no auth. Returns summary for a shared meeting."""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT id, title, created_at
+                   FROM meetings WHERE share_token = %s AND status = 'complete'""",
+                (token,),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404)
+
+            meeting = dict(row)
+            meeting_id = meeting["id"]
+
+            cur.execute(
+                "SELECT summary, action_items, participants FROM meeting_meta WHERE meeting_id = %s LIMIT 1",
+                (meeting_id,),
+            )
+            meta_row = cur.fetchone()
+
+            cur.execute(
+                "SELECT text, context FROM decisions WHERE meeting_id = %s ORDER BY start_sec",
+                (meeting_id,),
+            )
+            decisions = [dict(d) for d in cur.fetchall()]
+
+    meta = dict(meta_row) if meta_row else {}
+    return {
+        "title": meeting["title"],
+        "created_at": str(meeting["created_at"]),
+        "summary": meta.get("summary", ""),
+        "participants": meta.get("participants") or [],
+        "action_items": meta.get("action_items") or [],
+        "decisions": decisions,
+    }
+
+
 @app.post("/feedback")
 def post_feedback(
     type: str = Body(..., embed=True),
