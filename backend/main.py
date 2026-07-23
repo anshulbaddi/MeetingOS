@@ -41,7 +41,7 @@ from chat import ask_meeting
 from db import get_db
 from live_transcription import handle_live_session
 from search import cross_meeting_search
-from storage import upload, get_public_url
+from storage import upload, get_public_url, delete_file
 from tasks import transcribe_meeting_task
 
 # ── Config from environment ────────────────────────────────────────────────────
@@ -267,6 +267,48 @@ def get_meeting(meeting_id: str, user_id: str = Depends(get_current_user_id)):
     file_path = meeting.get("file_path") or ""
     meeting["recording_url"] = get_public_url(file_path) if file_path else None
     return meeting
+
+
+@app.patch("/meetings/{meeting_id}")
+def rename_meeting(
+    meeting_id: str,
+    title: str = Body(..., embed=True),
+    user_id: str = Depends(get_current_user_id),
+):
+    title = title.strip()
+    if not title:
+        raise HTTPException(status_code=422, detail="Title cannot be empty")
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE meetings SET title = %s WHERE id = %s AND user_id = %s RETURNING id",
+                (title, meeting_id, user_id),
+            )
+            if not cur.fetchone():
+                raise HTTPException(status_code=404)
+    return {"id": meeting_id, "title": title}
+
+
+@app.delete("/meetings/{meeting_id}", status_code=204)
+def delete_meeting(meeting_id: str, user_id: str = Depends(get_current_user_id)):
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT file_path FROM meetings WHERE id = %s AND user_id = %s",
+                (meeting_id, user_id),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404)
+            file_path = row["file_path"]
+
+            # Cascade delete — FK constraints handle most, but be explicit
+            for table in ("chat_messages", "meeting_meta", "chunks", "segments", "meetings"):
+                col = "meeting_id" if table != "meetings" else "id"
+                cur.execute(f"DELETE FROM {table} WHERE {col} = %s", (meeting_id,))
+
+    if file_path:
+        delete_file(file_path)
 
 
 @app.get("/conflicts")

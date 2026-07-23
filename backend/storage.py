@@ -76,6 +76,20 @@ def download_fileobj(object_key: str) -> BytesIO:
     return buf
 
 
+def delete_file(object_key: str) -> None:
+    """Delete an object from storage (best-effort; does not raise on missing key)."""
+    if _use_local():
+        try:
+            (_LOCAL_ROOT / object_key).unlink()
+        except FileNotFoundError:
+            pass
+    else:
+        try:
+            _get_s3().delete_object(Bucket=_bucket(), Key=object_key)
+        except Exception:
+            pass
+
+
 @contextmanager
 def download_tempfile(object_key: str):
     ext = "." + object_key.rsplit(".", 1)[-1] if "." in object_key else ""
