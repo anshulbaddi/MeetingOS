@@ -1,0 +1,93 @@
+# ── Celery Worker + KEDA autoscaling ───────────────────────────────────────────
+#
+# KEDA reads `LLEN celery` from Redis every 15 s.
+# One worker pod is added for every 3 queued jobs (listLength: "3").
+# Because task_acks_late=True, the list shrinks only when a task finishes —
+# so queue depth is always an accurate proxy for remaining work.
+#
+# Install KEDA first:
+#   helm repo add kedacore https://kedacore.github.io/charts
+#   helm install keda kedacore/keda --namespace keda --create-namespace
+#
+# Scaling examples:
+#   0 tasks  → 1 worker  (minReplicaCount floor)
+#   6 tasks  → 2 workers
+#   15 tasks → 5 workers
+#   30 tasks → 10 workers (maxReplicaCount ceiling)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: meetingos
+spec:
+  # KEDA controls replica count — start at 1, KEDA takes over from there
+  replicas: 1
+  selector:
+    matchLabels:
+      app: worker
+  template:
+    metadata:
+      labels:
+        app: worker
+    spec:
+      containers:
+        - name: worker
+          image: ghcr.io/anshulbaddi/meetingos-backend:latest
+          command:
+            - celery
+            - -A
+            - celery_app
+            - worker
+            - --loglevel=info
+            # Each pod runs 2 concurrent processes (matches docker-compose)
+            - --concurrency=2
+          envFrom:
+            - configMapRef:
+                name: meetingos-config
+            - secretRef:
+                name: meetingos-secrets
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2000m"
+              memory: "4Gi"   # Whisper + pyannote.audio are memory-hungry
+          livenessProbe:
+            # Celery exposes a ping via the inspect API
+            exec:
+              command:
+                - celery
+                - -A
+                - celery_app
+                - inspect
+                - ping
+                - --timeout=5
+            initialDelaySeconds: 30
+            periodSeconds: 60
+            failureThreshold: 3
+      terminationGracePeriodSeconds: 300   # finish in-flight transcription before eviction
+---
+# KEDA ScaledObject — drives worker replica count from Redis queue depth.
+# Requires KEDA to be installed in the cluster (see comment above).
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: worker-scaledobject
+  namespace: meetingos
+spec:
+  scaleTargetRef:
+    name: worker
+  pollingInterval: 15        # check queue depth every 15 seconds
+  cooldownPeriod: 60         # wait 60 s after queue drains before scaling down
+  minReplicaCount: 1         # always keep at least 1 worker warm
+  maxReplicaCount: 10
+  triggers:
+    - type: redis
+      metadata:
+        # "redis" resolves to the headless StatefulSet service inside the cluster
+        address: redis:6379
+        # Celery uses the queue name as the Redis list key
+        listName: celery
+        # Target: 1 pod per 3 queued jobs
+        listLength: "3"

@@ -1,0 +1,59 @@
+# ── Nginx Ingress ───────────────────────────────────────────────────────────────
+# Routes external traffic:
+#   api.meetingos.app/*  → api:8000  (FastAPI backend)
+#   meetingos.app/*      → frontend:3000  (Next.js)
+#
+# Install the controller first:
+#   helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+#   helm install ingress-nginx ingress-nginx/ingress-nginx \
+#     --namespace ingress-nginx --create-namespace
+#
+# Then point your DNS:
+#   meetingos.app     → LoadBalancer external IP
+#   api.meetingos.app → LoadBalancer external IP
+#
+# TLS is managed by cert-manager (install separately):
+#   helm install cert-manager jetstack/cert-manager \
+#     --namespace cert-manager --create-namespace \
+#     --set installCRDs=true
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: meetingos-ingress
+  namespace: meetingos
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-body-size: "512m"      # allow large file uploads
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"        # disable buffering for SSE (agent stream)
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - meetingos.app
+        - api.meetingos.app
+      secretName: meetingos-tls
+  rules:
+    # Backend API — all requests to api subdomain go to FastAPI
+    - host: api.meetingos.app
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: api
+                port:
+                  number: 8000
+
+    # Frontend — everything else goes to Next.js
+    - host: meetingos.app
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 3000

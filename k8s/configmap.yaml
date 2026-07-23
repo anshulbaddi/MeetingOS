@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: meetingos-config
+  namespace: meetingos
+data:
+  # Redis is the in-cluster StatefulSet — api and worker reach it by service name
+  REDIS_URL: "redis://redis:6379/0"
+
+  # api service is ClusterIP; frontend talks to it internally on port 8000
+  API_URL: "http://api:8000"
+
+  # Baked into the frontend image at build time — must match the public Ingress host
+  # Change this to your real domain when building the frontend image
+  NEXT_PUBLIC_API_URL: "https://api.meetingos.app"
+
+  NODE_ENV: "production"
+  MAX_UPLOAD_MB: "500"
+
+  # Allowed CORS origins (comma-separated)
+  ALLOWED_ORIGINS: "https://meetingos.app"

@@ -1,0 +1,75 @@
+# ── Frontend (Next.js) ──────────────────────────────────────────────────────────
+# NEXT_PUBLIC_API_URL is baked into the image at build time (Next.js requirement).
+# Build the image with the correct public URL before pushing:
+#
+#   docker build \
+#     --build-arg NEXT_PUBLIC_API_URL=https://api.meetingos.app \
+#     -t ghcr.io/anshulbaddi/meetingos-frontend:latest .
+#
+# Runtime env vars (NEXTAUTH_SECRET, GOOGLE_CLIENT_ID, etc.) are injected from
+# the Secret and ConfigMap normally — only NEXT_PUBLIC_* needs build-time injection.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: meetingos
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: frontend
+                topologyKey: kubernetes.io/hostname
+      containers:
+        - name: frontend
+          image: ghcr.io/anshulbaddi/meetingos-frontend:latest
+          ports:
+            - containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: meetingos-config
+            - secretRef:
+                name: meetingos-secrets
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 20
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: meetingos
+spec:
+  selector:
+    app: frontend
+  ports:
+    - port: 3000
+      targetPort: 3000
